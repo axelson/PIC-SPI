@@ -1,44 +1,145 @@
-#include <p18f4620.h>
+#include <p30f1010.h>
 #include "spi.h"
 
 void spiMasterSetup(void)
 {
-	spiMakeGeneral();
+	/* 
+	 * 2. Write the desired settings to the SPIxCON1
+	 * register with MSTEN (SPIxCON1<5>) = 1.
+	 */
+	// Enable master mode
+	SPI_CONTROL.MSTEN = 1;
+	/*
+	 * 1 = Enables module and configures SCKx, SDOx, SDIx and SSx as serial port pins
+	 * 0 = Disables module
+	 */
+	spiCommonSetup();
 
-	SSPCON1bits.SSPM3 = 0;
-	SSPCON1bits.SSPM2 = 0;
-	// FOSC/64
-	SSPCON1bits.SSPM1 = 1;
-	SSPCON1bits.SSPM0 = 0;
+	/*
+	 * 3. Clear the SPIROV bit (SPIxSTAT<6>).
+	 */
+	SPI_STATUS.SPIROV = 0;
+	/*
+	 * 1 = A new byte/word is completely received and discarded. The user software has not read the
+	 * previous data in the SPIxBUF register.
+	 * 0 = No overflow has occurred
+	 */
 
-	TRISCbits.TRISC3 = 0;		// Master mode
+	/*
+	 * 4. Enable SPI operation by setting the SPIEN bit
+	 * (SPIxSTAT<15>).
+	 */
+	SPI_STATUS.SPIEN = 1;
+	/*
+	 * 1 = Enables module and configures SCKx, SDOx, SDIx and SSx as serial port pins
+	 * 0 = Disables module
+	 */
 
-	SSPCON1bits.SSPEN = 1;		// MSSP enable bit
+
+	// Other setup that is specific to master mode
+
+	// Set Primary Prescale Bits
+	SPI_CONTROL.PPRE = 0x00;
+	/* 11 = Primary prescale 1:1
+	 * 10 = Primary prescale 4:1
+	 * 01 = Primary prescale 16:1
+	 * 00 = Primary prescale 64:1
+	 */
+
+	// Set Secondary Prescale Bits (finer resolution than primary)
+	SPI_CONTROL.SPRE = 0b000;
+	/* 111 = Secondary prescale 1:1
+	 * 110 = Secondary prescale 2:1
+	 * ...
+	 * 000 = Secondary prescale 8:1
+	 */
+
+
+	// Select when to sample data
+	SPI_CONTROL.SMP = 0;
+	/*
+	 * 1 = Input data sampled at end of data output time
+	 * 0 = Input data sampled at middle of data output time
+	 */
 }
 
-void spiSlaveSelect(int slave)
+
+void spiSlaveSetup(void)
 {
-//	if(slave == 1)
-//	else
+	/*
+	 * 1. Clear the SPIxBUF register.
+	 */
+	SPI_BUFFER = 0;
+
+
+	/*
+	 * 3. Write the desired settings to the SPIxCON1 and
+	 * SPIxCON2 registers with MSTEN
+	 * (SPIxCON1<5>) = 0.
+	 */
+	SPI_CONTROL.MSTEN = 0;
+	/*
+	 * 1 = Enables module and configures SCKx, SDOx, SDIx and SSx as serial port pins
+	 * 0 = Disables module
+	 */
+	spiCommonSetup();
+
+
+	/*
+	 * 4. Clear the SMP bit (SPIxCON1<9>).
+	 */ 
+	SPI_CONTROL.SMP = 0;
+	/*
+	 * SMP must be cleared when SPIx is used in Slave mode
+	 */
+
+
+	/*
+	 * 5. If the CKE (SPIxCON1<8>) bit is set, then the
+	 * SSEN bit (SPIxCON1<7>) must be set to enable
+	 * the SSx pin.
+	 */
+	if(SPI_CONTROL.CKE == 1) {
+		SPI_CONTROL.SSEN = 1;
+	}
+
+
+	/*
+	 * 6. Clear the SPIROV bit (SPIxSTAT<6>).
+	 */ 
+	SPI_STATUS.SPIROV = 0;
+	/*
+	 * 1 = A new byte/word is completely received and discarded. The user software has not read the
+	 * previous data in the SPIxBUF register.
+	 * 0 = No overflow has occurred
+	 */
+
+
+	/*
+	 * 7. Enable SPI operation by setting the SPIEN bit
+	 * (SPIxSTAT<15>).
+	 */
+	SPI_STATUS.SPIEN = 1;
+
+
 }
 
-void spiSendByte(char byte)
+void spiSendByte(int data)
 {
 	/*	When a byte is moved to the SSPBUF, the buffer full detect
 		bit (BF) is set.  When the SSPBUF is read, the BF bit is
 		cleared.
 	*/
-	while(SSPSTATbits.BF);
 
-PORTA = 0b00000100;
+	while(SPI_STATUS.SPITBF);
 
-	SSPBUF = byte;
+	SPI_BUFFER = data;
 }
 
 void spiClearSSPBUF(void)
 {
-	char dummy;
-	dummy = SSPBUF;
+//	char dummy;
+//	dummy = SSPBUF;
 }
 
 char spiReadByte(void)
@@ -52,163 +153,33 @@ char spiReadByte(void)
     */
 
 	// Wait until byte is full received
-	while(!(PIR1bits.SSPIF & SSPSTATbits.BF));
-	byte = SSPBUF;
+	while(!(SPI_STATUS.SPIRBF));
 
-	PIR1bits.SSPIF = 0;		// Clear flag
 	return byte;
 }
 
-void spiSlaveSetup(void)
+
+void spiCommonSetup(void)
 {
-	spiMakeGeneral();
-
-	SSPCON1bits.SSPM3 = 0;
-	SSPCON1bits.SSPM2 = 1;
-	SSPCON1bits.SSPM1 = 0;
-	SSPCON1bits.SSPM0 = 1;		// SS disabled (1)
-								// SS enabled (0)
-
-	TRISCbits.TRISC3 = 1;		// Slave mode
-
-	SSPCON1bits.SSPEN = 1;		// MSSP enable bit
-}
-
-
-
-void spiMakeGeneral(void)
-{
-	/*	CONTROL REGISTERS
-
-		The MSSP module has three associated registers.  These
-		include a status register (SSPSTAT) and two control
-		registers (SSPCON1 and SSPCON2).
-	*/
-
-	/*	SPI MODE
-
-		The SPI mode allows 8 bits of data to be synchronously
-		transmitted and received simultaneously.  All four SPI
-		modes are supported.  To accomplish communication,
-		typically three pins are used:
-		-	Serial Data Out (SDO) - RC5/SDO
-		-	Serial Data In (SDI) - RC4/SDI/SDA
-		-	Serial Clock (SCK) - RC3/SCK/SCL
-
-		Additionally, a fourth pin may be used when in Slave
-		mode of operation:
-		-	Slave Select (SS') - RA5/AN/SS'/HLVDIN/C2OUT
-	*/
-
-	/*	The MSSP module has four registers for SPI mode operation.
-		These are:
-		-	MSSP Control Register 1 (SSPCON1)
-		-	MSSP Status Register (SSPSTAT)
-		-	Serial Receive/Transmit Buffer Registers (SSPBUF)
-		-	MSSP Shift Register (SSPSR) - Not directly accessible
-
-		SSPCON1 and SSPSTAT are the control and status registers in
-		SPI mode operation.  The SSPCON1 register is readable and
-		writable.  The lower 6 bits of the SSPSTAT are read-only.
-		The upper 2 bits of the SSPSTAT are read/write.
-
-		SSPSR is the shift register used for shifting data in or
-		out. SSPBUF is the buffer register to which data bytes
-		are written to or read from.
-
-		In receive operations, SSPSR and SSPBUF together create a
-		double buffered receiver.  When SSPSR receives a complete
-		byte, it is transferred to SSPBUF and the SSPIF interrupt
-		is set.
-
-		During transmission, the SSPBUF is not double-buffered.
-		A write to SSPBUF will write to both SSPBUF and SSPSR.
-
-	*/
-
-	/*	OPERATION
-
-		When initializing the SPI, several operations need to be
-		specified.  This is done by programming the appropriate
-		control bits (SSPCON1<5:0> and SSPSTAT<7:6>).  These
-		control bits allow for the following to be specified:
-		-	Master mode (SCK is the clock output)
-		-	Slave mode (SCK is the clock input)
-		-	Clock Polarity (Idle state of SCK)
-		-	Data Input Sample Phase (middle or end of data output
-			time)
-		-	Clock Rate (Master mode only)
-		-	Slave Select mode (Slave mode only)
-
-		The MSSP consists of a transmit/receive shift register
-		(SSPSR) and a buffer register (SSPBUF).  The SSPSR shifts
-		the data in and out of the device, MSb first.  The SSPBUF
-		holds the data that was written to the SSPSR until the
-		received data is ready.  Once the 8 bits of data have been
-		received, that byte is moved to the SSPBUF register.  Then,
-		the buffer Full detect bit, BF (SSPSTAT<0>) and the
-		interrupt flag bit, SSPIF, are set.  This double buffering
-		of the received data (SSPBUF) allows the next byte to start
-		reception before reading the data that was just received.
-		Any write to the SSPBUF register during transmission/reception
-		of data will be ignored and the write collision detect bit
-		WCOL (SSPCON1<7>), will be set.  User software must clear
-		the WCOL bit so that it can be determined if the following
-		write(s) to the SSPBUF register completed successfully.
-
-		When the application software is expecting to receive valid
-		data, the SSPBUF should be read before the next byte of
-		data transfer is written to the SSPBUF.  The Buffer Full
-		bit, BF (SSPSTAT<0>), indicates when SSPBUF has been loaded
-		with the receive data (transmission complete).  When the
-		SSPBUF is read, the BF bit is cleared.  This data may be
-		irrelevant if the SPI is only a transmitter.  Generally,
-		the MSSP interrupt is used to determine when the
-		transmisson/reception has completed.  The SSPBUF must be
-		read and/or written.  If the interrupt method is not going
-		to be used, then software polling can be done to ensure
-		that a write collision does not occur.
-	*/
-
-	SSPCON1bits.SSPEN = 0;		// Turn off SPI mode until reconfig
-								// is complete
-
-	SSPCON1bits.CKP = 0;		// Both processors should be
-								// programmed to same CKP
-
-	SSPSTATbits.SMP = 0;		// Input data sampled at middle
-								// of data output time
-	SSPSTATbits.CKE = 1;
-
-/*	ENABLING SPI I/O
-
-		To enable the serial port, MSSP Enable bit, SSPEN
-		(SSPCON1<5>), must be set.  To reset or reconfigure SPI
-		mode, clear the SSPEN bit, reinitialize the SSPCON
-		registers and then set the SSPEN bit.  This configures
-		the SDI, SDO, SCK, and SS' pins as serial port pins.
-		For the pins to behave as the serial port function, some
-		must have their data direction bits (in the TRIS register)
-		appopriately programmed as follows:
-		-	SDI is automatically controlled by the SPI module
-		-	SDO must have TRISC<5> bit cleared
-		-	SCK (Master mode) must have TRISC<3> bit cleared
-		-	SCK (Slave mode) must have the TRISC<3> bit set
-		-	SS' must have TRISA<5> bit set
-	*/
-
-	SSPCON1bits.SSPEN = 1;
-	TRISCbits.TRISC5 = 0;
-
-//	TRISCbits.TRISC3 = 1;		// Slave mode
-//	TRISCbits.TRISC3 = 0;		// Master mode
-
-	TRISAbits.TRISA5 = 1;		// SS
-
+	// Set Clock Polarity (same for both modes)
+	SPI_CONTROL.CKP = 0;
 	/*
-		Any serial port function that is not desired may be
-		overridden by programming the corresponding data direction
-		(TRIS) register to the opposite value.
-	*/
+	 * 1 = Idle state for clock is a high level; active state is a low level
+	 * 0 = Idle state for clock is a low level; active state is a high l
+	 */
 
+	// Set Clock Edge Select
+	SPI_CONTROL.CKE = 1;
+	/*
+	 * 1 = Serial output data changes on transition from active clock state to Idle clock state (see bit 6)
+	 * 0 = Serial output data changes on transition from Idle clock state to active clock state (see bit 6)
+	 */
+
+
+	// Select word or byte communication
+	SPI_CONTROL.MODE16 = 0;
+	/*
+	 * 1 = Communication is word-wide (16 bits)
+	 * 0 = Communication is byte-wide (8 bits)
+	 */
 }
